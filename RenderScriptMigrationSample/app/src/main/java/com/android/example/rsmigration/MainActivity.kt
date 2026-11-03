@@ -109,7 +109,9 @@ class MainActivity : AppCompatActivity() {
             // Vulkan compute pipeline
             VulkanImageProcessor(this),
             // GLSL compute pipeline
-            GLSLImageProcessor()
+            GLSLImageProcessor(),
+            // WebGPU compute pipeline
+            WebGPUImageProcessor(this)
         )
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

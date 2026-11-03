@@ -5,6 +5,7 @@
         <item>@string/renderscript_scripts</item>
         <item>@string/vulkan</item>
         <item>@string/glsl</item>
+        <item>@string/webgpu</item>
         <item>@string/render_effect</item>
     </string-array>
 
