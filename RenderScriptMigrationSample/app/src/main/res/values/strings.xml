@@ -10,6 +10,7 @@
     <string name="renderscript_scripts">Renderscript Scripts</string>
     <string name="vulkan">Vulkan</string>
     <string name="render_effect">RenderEffect</string>
+    <string name="agsl">AGSL</string>
     <string name="glsl">GLSL</string>
     <string name="webgpu">WebGPU</string>
 

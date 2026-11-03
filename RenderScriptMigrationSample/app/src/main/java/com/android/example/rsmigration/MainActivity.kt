@@ -118,6 +118,10 @@ class MainActivity : AppCompatActivity() {
             // RenderEffect
             imageProcessors.add(RenderEffectImageProcessor())
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // AGSL RuntimeShader
+            imageProcessors.add(AGSLImageProcessor())
+        }
         mImageProcessors = imageProcessors.toTypedArray()
 
         mImageProcessors.forEach { processor ->
