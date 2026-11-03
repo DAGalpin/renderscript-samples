@@ -1,25 +1,92 @@
-apply plugin: 'com.android.application'
-apply plugin: 'kotlin-android'
+import javax.inject.Inject
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
+
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+@CacheableTask
+abstract class CompileVulkanShadersTask extends DefaultTask {
+    @InputDirectory
+    @PathSensitive(PathSensitivity.RELATIVE)
+    abstract DirectoryProperty getShaderSourceDir()
+
+    @Internal
+    abstract DirectoryProperty getNdkDirectory()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutputDir()
+
+    @Inject
+    abstract ExecOperations getExecOperations()
+
+    @TaskAction
+    void compileShaders() {
+        File ndkDir = ndkDirectory.get().asFile
+        File shaderToolsRoot = new File(ndkDir, 'shader-tools')
+        boolean isWindows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('win')
+        String exeName = isWindows ? 'glslc.exe' : 'glslc'
+        File glslc = shaderToolsRoot.listFiles()
+                ?.collect { new File(it, exeName) }
+                ?.find { it.isFile() }
+        if (glslc == null) {
+            throw new GradleException("Unable to locate ${exeName} under ${shaderToolsRoot}")
+        }
+
+        File srcRoot = shaderSourceDir.get().asFile
+        File outRoot = new File(outputDir.get().asFile, 'shaders')
+        outRoot.deleteDir()
+        outRoot.mkdirs()
+
+        srcRoot.eachFileRecurse { File file ->
+            if (file.isFile() && file.name ==~ /.*\.(vert|tesc|tese|geom|frag|comp)/) {
+                String relPath = srcRoot.toPath().relativize(file.toPath()).toString()
+                File outFile = new File(outRoot, "${relPath}.spv")
+                outFile.parentFile.mkdirs()
+                execOperations.exec { spec ->
+                    spec.executable = glslc.absolutePath
+                    spec.args('-c', file.absolutePath, '-o', outFile.absolutePath)
+                }
+            }
+        }
+    }
+}
 
 android {
-    compileSdk 33
+    namespace = 'com.android.example.rsmigration'
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
 
-    // When building this project with with SDK build tools of version earlier than 31.0.0, and
+    // When building this project with SDK build tools of version earlier than 31.0.0, and
     // minSdkVersion 29+, the RenderScript compiler will fail with the following error message:
     //
     //     error: target API level '29' is out of range ('11' - '24')
     //
     // This issue has been fixed in SDK build tools 31.0.0.
-    buildToolsVersion '31.0.0'
+    buildToolsVersion = '37.0.0'
+    ndkVersion = '30.0.16248370'
 
     defaultConfig {
         applicationId "com.android.example.rsmigration"
-        minSdkVersion 29
-        targetSdkVersion 31
-        ndkVersion '22.0.7026061'
-        renderscriptTargetApi 24
-        versionCode 1
-        versionName "1.0"
+        minSdk = 29
+        targetSdk = 37
+        renderscriptTargetApi = 24
+        versionCode = 1
+        versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         externalNativeBuild {
             cmake {
@@ -29,41 +96,63 @@ android {
         }
     }
 
+    buildFeatures {
+        renderScript = true
+        shaders = false
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled = false
         }
     }
+
     externalNativeBuild {
         cmake {
-            version '3.10.2'
-            path 'src/main/cpp/CMakeLists.txt'
+            version = '4.1.2'
+            path = file('src/main/cpp/CMakeLists.txt')
         }
     }
 
     sourceSets {
         main {
             jniLibs {
-                srcDirs 'src/main/jniLibs/android-binaries-sdk-1.3.261.0'
+                srcDirs 'src/main/jniLibs/android-binaries-1.4.363.1'
             }
         }
     }
 
-    lintOptions {
-        abortOnError false
+    lint {
+        abortOnError = false
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        String variantCap = variant.name.capitalize()
+        def compileShadersTask = tasks.register("compile${variantCap}VulkanShaders", CompileVulkanShadersTask) { task ->
+            task.shaderSourceDir.set(layout.projectDirectory.dir('src/main/shaders'))
+            task.ndkDirectory.set(sdkComponents.ndkDirectory)
+        }
+        variant.sources.assets.addGeneratedSourceDirectory(compileShadersTask) { it.outputDir }
     }
 }
 
 dependencies {
     implementation fileTree(dir: "libs", include: ["*.jar"])
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-    implementation "org.jetbrains.kotlin:kotlin-reflect:$kotlin_version"
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.3.9")
-    implementation("androidx.graphics:graphics-core:1.0.0-alpha04")
-    implementation 'androidx.core:core-ktx:1.6.0'
-    implementation 'androidx.appcompat:appcompat:1.3.1'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.0'
-    testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.3'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.4.0'
+    implementation libs.kotlin.stdlib
+    implementation libs.kotlin.reflect
+    implementation libs.kotlinx.coroutines.android
+    implementation libs.androidx.graphics.core
+    implementation libs.androidx.core.ktx
+    implementation libs.androidx.appcompat
+    implementation libs.androidx.constraintlayout
+    testImplementation libs.junit
+    androidTestImplementation libs.androidx.test.ext.junit
+    androidTestImplementation libs.androidx.espresso.core
 }

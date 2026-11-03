@@ -35,7 +35,7 @@
 #define RET_CHECK(condition)                                                    \
     do {                                                                        \
         if (!(condition)) {                                                     \
-            LOGE("Check failed at %s:%u - %s", __FILE__, __LINE__, #condition); \
+            LOGE("Check failed at %s:%d - %s", __FILE__, __LINE__, #condition); \
             return false;                                                       \
         }                                                                       \
     } while (0)
@@ -45,7 +45,7 @@
     do {                                                                                    \
         auto _result = vkMethod(__VA_ARGS__);                                               \
         if (_result != VK_SUCCESS) {                                                        \
-            LOGE("%s failed with %s at %s:%u", #vkMethod, vkResultToStr(_result), __FILE__, \
+            LOGE("%s failed with %s at %s:%d", #vkMethod, vkResultToStr(_result), __FILE__, \
                  __LINE__);                                                                 \
             return false;                                                                   \
         }                                                                                   \

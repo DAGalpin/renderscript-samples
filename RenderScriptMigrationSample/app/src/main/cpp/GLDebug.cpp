@@ -21,25 +21,37 @@
 
 // our JNICallback struct.
 static thread_local struct JNICallback {
-    JNIEnv *env;
+    JavaVM *jvm;
     jmethodID mid;
     jobject obj;
 } jniCallback;
 
-static void openGLMessageCallback(GLenum source, GLenum type, GLuint id,
+static void GL_APIENTRY openGLMessageCallback(GLenum source, GLenum type, GLuint id,
                                    GLenum severity, GLsizei, const GLchar* message,
                                    const void* userParam)
 {
-    if ( nullptr != userParam ) {
+    if (nullptr != userParam) {
         const JNICallback* callback = reinterpret_cast<const JNICallback*>(userParam);
+        if (callback->jvm == nullptr || callback->obj == nullptr || callback->mid == nullptr) {
+            return;
+        }
 
-        jstring jniMessageString = callback->env->NewStringUTF(message);
-        callback->env->CallVoidMethod(callback->obj, callback->mid,
-                                            static_cast<jint>(source),
-                                            static_cast<jint>(type),
-                                            static_cast<jint>(id),
-                                            static_cast<jint>(severity),
-                                            jniMessageString );
+        void* envPtr = nullptr;
+        if (callback->jvm->GetEnv(&envPtr, JNI_VERSION_1_6) != JNI_OK || envPtr == nullptr) {
+            return;
+        }
+        JNIEnv* env = static_cast<JNIEnv*>(envPtr);
+
+        jstring jniMessageString = env->NewStringUTF(message != nullptr ? message : "");
+        if (jniMessageString != nullptr) {
+            env->CallVoidMethod(callback->obj, callback->mid,
+                                static_cast<jint>(source),
+                                static_cast<jint>(type),
+                                static_cast<jint>(id),
+                                static_cast<jint>(severity),
+                                jniMessageString);
+            env->DeleteLocalRef(jniMessageString);
+        }
     }
 }
 
@@ -50,20 +62,47 @@ JNIEXPORT jboolean JNICALL
 Java_com_android_example_rsmigration_GLSLImageProcessorKt_EnableDebugLogging(JNIEnv *env,
                                                                              jclass,
                                                                              jobject callback) {
-    if ( env ) {
-        auto debugCallback  = reinterpret_cast<void (*)(void *, void *)>(eglGetProcAddress("glDebugMessageCallback"));
-        if (debugCallback) {
-            // enable debug output
-            glEnable(GL_DEBUG_OUTPUT);
-            // call back on the same thread
-            glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-
-            jniCallback.env = env;
-            jclass cls = env->GetObjectClass(callback);
-            jniCallback.mid = env->GetMethodID(cls, "onMessage","(IIIILjava/lang/String;)V");
-            jniCallback.obj = env->NewWeakGlobalRef(callback);
-            debugCallback(reinterpret_cast<void*>(openGLMessageCallback), &jniCallback);
+    if (env != nullptr) {
+        if (jniCallback.obj != nullptr) {
+            env->DeleteGlobalRef(jniCallback.obj);
+            jniCallback.obj = nullptr;
+            jniCallback.mid = nullptr;
         }
+
+        if (callback == nullptr) {
+            glDebugMessageCallback(nullptr, nullptr);
+            glDisable(GL_DEBUG_OUTPUT);
+            return JNI_TRUE;
+        }
+
+        if (env->GetJavaVM(&jniCallback.jvm) != JNI_OK || jniCallback.jvm == nullptr) {
+            return JNI_FALSE;
+        }
+
+        jclass cls = env->GetObjectClass(callback);
+        if (cls == nullptr) {
+            return JNI_FALSE;
+        }
+        jmethodID mid = env->GetMethodID(cls, "onMessage", "(IIIILjava/lang/String;)V");
+        env->DeleteLocalRef(cls);
+        if (mid == nullptr) {
+            return JNI_FALSE;
+        }
+
+        jobject globalCallback = env->NewGlobalRef(callback);
+        if (globalCallback == nullptr) {
+            return JNI_FALSE;
+        }
+
+        // enable debug output
+        glEnable(GL_DEBUG_OUTPUT);
+        // call back on the same thread
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+
+        jniCallback.mid = mid;
+        jniCallback.obj = globalCallback;
+        glDebugMessageCallback(openGLMessageCallback, &jniCallback);
+        return JNI_TRUE;
     }
-    return false;
+    return JNI_FALSE;
 }

@@ -22,9 +22,13 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import android.widget.SeekBar.OnSeekBarChangeListener
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import kotlin.system.measureNanoTime
 
 
@@ -47,6 +51,10 @@ class MainActivity : AppCompatActivity() {
         // The maximum amount of time in ms to run during the benchmark.
         private const val MAX_BENCHMARK_TIME_MS = 5000.0
 
+        // Index in R.array.processor_array for RenderScript Intrinsics, the most compatible
+        // pathway on API Level >= 36 once decoupled from ScriptC.
+        private const val MOST_COMPATIBLE_API36_PROCESSOR_INDEX = 0
+
         init {
             System.loadLibrary("rs_migration_jni")
         }
@@ -63,8 +71,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mInputImage: Bitmap
     private var mCurrentOutputImageIndex = 0
 
-    // Image processors
-    private lateinit var mImageProcessors: Array<ImageProcessor>
+    // Image processors matching R.array.processor_array indices (null when disabled)
+    private lateinit var mImageProcessors: Array<ImageProcessor?>
     private lateinit var mCurrentProcessor: ImageProcessor
 
     enum class FilterMode {
@@ -79,16 +87,25 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.controllers)) { view, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.updatePadding(left = insets.left, right = insets.right, bottom = insets.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
 
         // Load bitmap resources
         mInputImage = loadBitmap(R.drawable.data)
 
+        val isApi36OrHigher = Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA
+
         // Set up image processors
-        val imageProcessors = mutableListOf(
+        val imageProcessors = mutableListOf<ImageProcessor?>(
             // RenderScript intrinsics
             RenderScriptImageProcessor(this, useIntrinsic = true),
-            // RenderScript script kernels
-            RenderScriptImageProcessor(this, useIntrinsic = false),
+            // RenderScript script kernels (ScriptC is disabled on API Level >= 36)
+            if (isApi36OrHigher) null else RenderScriptImageProcessor(this, useIntrinsic = false),
             // Vulkan compute pipeline
             VulkanImageProcessor(this),
             // GLSL compute pipeline
@@ -102,9 +119,14 @@ class MainActivity : AppCompatActivity() {
         mImageProcessors = imageProcessors.toTypedArray()
 
         mImageProcessors.forEach { processor ->
-            processor.configureInputAndOutput(mInputImage, NUMBER_OF_OUTPUT_IMAGES)
+            processor?.configureInputAndOutput(mInputImage, NUMBER_OF_OUTPUT_IMAGES)
         }
-        mCurrentProcessor = mImageProcessors[0]
+        val defaultProcessorIndex = if (isApi36OrHigher) {
+            MOST_COMPATIBLE_API36_PROCESSOR_INDEX
+        } else {
+            0
+        }
+        mCurrentProcessor = checkNotNull(mImageProcessors[defaultProcessorIndex])
 
         // Set up image view
         mImageView = findViewById(R.id.imageView)
@@ -124,13 +146,32 @@ class MainActivity : AppCompatActivity() {
 
         // Set up spinner for image processor selection
         mProcessorSpinner = findViewById(R.id.processorSpinner)
-        ArrayAdapter.createFromResource(
+        val processorOptions = resources.getTextArray(R.array.processor_array)
+        object : ArrayAdapter<CharSequence>(
             this,
-            R.array.processor_array,
-            android.R.layout.simple_spinner_item
-        ).also { adapter ->
+            android.R.layout.simple_spinner_item,
+            processorOptions
+        ) {
+            override fun areAllItemsEnabled(): Boolean = !isApi36OrHigher
+
+            override fun isEnabled(position: Int): Boolean =
+                position in mImageProcessors.indices && mImageProcessors[position] != null
+
+            override fun getDropDownView(
+                position: Int,
+                convertView: View?,
+                parent: ViewGroup
+            ): View {
+                return super.getDropDownView(position, convertView, parent).apply {
+                    isEnabled = isEnabled(position)
+                }
+            }
+        }.also { adapter ->
             adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
             mProcessorSpinner.adapter = adapter
+        }
+        if (isApi36OrHigher && savedInstanceState == null) {
+            mProcessorSpinner.setSelection(defaultProcessorIndex)
         }
         mProcessorSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
@@ -139,7 +180,14 @@ class MainActivity : AppCompatActivity() {
                 position: Int,
                 id: Long
             ) {
-                mCurrentProcessor = mImageProcessors[position]
+                val processor = mImageProcessors.getOrNull(position)
+                if (processor == null) {
+                    val fallbackIndex = mImageProcessors.indexOf(mCurrentProcessor)
+                        .takeIf { it >= 0 } ?: defaultProcessorIndex
+                    mProcessorSpinner.setSelection(fallbackIndex)
+                    return
+                }
+                mCurrentProcessor = processor
                 startUpdateImage(mSeekBar.progress)
             }
 
@@ -163,7 +211,7 @@ class MainActivity : AppCompatActivity() {
                 position: Int,
                 id: Long
             ) {
-                mFilterMode = FilterMode.values()[position]
+                mFilterMode = FilterMode.entries[position]
                 startUpdateImage(mSeekBar.progress)
             }
 
@@ -176,7 +224,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        mImageProcessors.forEach { processor -> processor.cleanup() }
+        mImageProcessors.forEach { processor -> processor?.cleanup() }
         super.onDestroy()
     }
 
@@ -214,14 +262,14 @@ class MainActivity : AppCompatActivity() {
         val processor = mCurrentProcessor
 
         // Start a new thread to invoke RenderScript/Vulkan kernels without blocking the UI thread.
-        mLatestThread = Thread(Runnable {
+        mLatestThread = Thread {
             synchronized(mLock) {
                 // If there is a new worker thread scheduled while this thread is waiting on the
                 // lock, cancel this thread. This ensures that when worker threads are piled up
                 // (typically in slow device with heavy kernel), only the latest (and already
                 // started) thread invokes RenderScript/Vulkan operation.
                 if (mLatestThread != Thread.currentThread()) {
-                    return@Runnable
+                    return@Thread
                 }
 
                 // Apply the filter and measure the latency.
@@ -237,7 +285,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 mCurrentOutputImageIndex = (mCurrentOutputImageIndex + 1) % NUMBER_OF_OUTPUT_IMAGES
             }
-        })
+        }
         mLatestThread?.start()
     }
 

@@ -18,20 +18,33 @@ package com.android.example.rsmigration
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.renderscript.*
+import androidx.core.graphics.createBitmap
 import kotlin.math.*
 
 
+@Suppress("DEPRECATION")
 class RenderScriptImageProcessor(context: Context, useIntrinsic: Boolean) : ImageProcessor {
     override val name = "RenderScript " + if (useIntrinsic) "Intrinsics" else "Scripts"
 
+    init {
+        require(useIntrinsic || Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) {
+            "ScriptC scripts are not supported on API Level >= 36"
+        }
+    }
+
     // Renderscript scripts
     private val mRS: RenderScript = RenderScript.create(context)
-    private val mIntrinsicColorMatrix = ScriptIntrinsicColorMatrix.create(mRS)
-    private val mIntrinsicBlur = ScriptIntrinsicBlur.create(mRS, Element.U8_4(mRS))
-    private val mScriptColorMatrix = ScriptC_colormatrix(mRS)
-    private val mScriptBlur = ScriptC_blur(mRS)
     private val mUseIntrinsic = useIntrinsic
+    private val mIntrinsicColorMatrix: ScriptIntrinsicColorMatrix? =
+        if (mUseIntrinsic) ScriptIntrinsicColorMatrix.create(mRS) else null
+    private val mIntrinsicBlur: ScriptIntrinsicBlur? =
+        if (mUseIntrinsic) ScriptIntrinsicBlur.create(mRS, Element.U8_4(mRS)) else null
+    private val mScriptColorMatrix: ScriptC_colormatrix? =
+        if (!mUseIntrinsic) ScriptC_colormatrix(mRS) else null
+    private val mScriptBlur: ScriptC_blur? =
+        if (!mUseIntrinsic) ScriptC_blur(mRS) else null
 
     // Input image
     private lateinit var mInAllocation: Allocation
@@ -52,25 +65,29 @@ class RenderScriptImageProcessor(context: Context, useIntrinsic: Boolean) : Imag
         // Input allocation
         mInAllocation = Allocation.createFromBitmap(mRS, inputImage)
 
-        // This buffer is only used as the intermediate result in script blur,
-        // so only USAGE_SCRIPT is needed.
-        mTempAllocations = Allocation.createAllocations(
-            mRS,
-            Type.createXY(mRS, Element.F32_4(mRS), inputImage.width, inputImage.height),
-            Allocation.USAGE_SCRIPT,
-            /*numAlloc=*/2
-        )
-
         // Output images and allocations
+        val bitmapConfig = inputImage.config ?: Bitmap.Config.ARGB_8888
         mOutputImages = Array(numberOfOutputImages) {
-            Bitmap.createBitmap(inputImage.width, inputImage.height, inputImage.config)
+            createBitmap(inputImage.width, inputImage.height, bitmapConfig)
         }
         mOutAllocations =
             Array(numberOfOutputImages) { i -> Allocation.createFromBitmap(mRS, mOutputImages[i]) }
 
-        // Update dimensional variables in blur kernel
-        mScriptBlur._gWidth = inputImage.width
-        mScriptBlur._gHeight = inputImage.height
+        if (!mUseIntrinsic) {
+            // This buffer is only used as the intermediate result in script blur,
+            // so only USAGE_SCRIPT is needed.
+            mTempAllocations = Allocation.createAllocations(
+                mRS,
+                Type.createXY(mRS, Element.F32_4(mRS), inputImage.width, inputImage.height),
+                Allocation.USAGE_SCRIPT,
+                /*numAlloc=*/2
+            )
+
+            // Update dimensional variables in blur kernel
+            val scriptBlur = checkNotNull(mScriptBlur)
+            scriptBlur._gWidth = inputImage.width
+            scriptBlur._gHeight = inputImage.height
+        }
     }
 
     override fun rotateHue(radian: Float, outputIndex: Int): Bitmap {
@@ -92,11 +109,13 @@ class RenderScriptImageProcessor(context: Context, useIntrinsic: Boolean) : Imag
 
         // Invoke filter kernel
         if (mUseIntrinsic) {
-            mIntrinsicColorMatrix.setColorMatrix(mat)
-            mIntrinsicColorMatrix.forEach(mInAllocation, mOutAllocations[outputIndex])
+            val intrinsicColorMatrix = checkNotNull(mIntrinsicColorMatrix)
+            intrinsicColorMatrix.setColorMatrix(mat)
+            intrinsicColorMatrix.forEach(mInAllocation, mOutAllocations[outputIndex])
         } else {
-            mScriptColorMatrix.invoke_setMatrix(mat)
-            mScriptColorMatrix.forEach_root(mInAllocation, mOutAllocations[outputIndex])
+            val scriptColorMatrix = checkNotNull(mScriptColorMatrix)
+            scriptColorMatrix.invoke_setMatrix(mat)
+            scriptColorMatrix.forEach_root(mInAllocation, mOutAllocations[outputIndex])
         }
 
         // Copy to bitmap, this should cause a synchronization rather than a full copy.
@@ -109,12 +128,13 @@ class RenderScriptImageProcessor(context: Context, useIntrinsic: Boolean) : Imag
             throw RuntimeException("Invalid radius ${radius}, must be within [1.0, 25.0]")
         }
         if (mUseIntrinsic) {
+            val intrinsicBlur = checkNotNull(mIntrinsicBlur)
             // Set blur kernel size
-            mIntrinsicBlur.setRadius(radius)
+            intrinsicBlur.setRadius(radius)
 
             // Invoke filter kernel
-            mIntrinsicBlur.setInput(mInAllocation)
-            mIntrinsicBlur.forEach(mOutAllocations[outputIndex])
+            intrinsicBlur.setInput(mInAllocation)
+            intrinsicBlur.forEach(mOutAllocations[outputIndex])
         } else {
             // Calculate gaussian kernel, this is equivalent to ComputeGaussianWeights at
             // https://cs.android.com/android/platform/superproject/+/master:frameworks/rs/cpu_ref/rsCpuIntrinsicBlur.cpp;l=57
@@ -138,13 +158,14 @@ class RenderScriptImageProcessor(context: Context, useIntrinsic: Boolean) : Imag
             // filter in a single pass. The two-pass blur algorithm has two kernels, each of
             // time complexity O(iRadius), while the single-pass algorithm has only one kernel,
             // but the time complexity is O(iRadius^2).
-            mScriptBlur._gRadius = iRadius
-            mScriptBlur._gKernel = kernel
-            mScriptBlur._gScratch1 = mTempAllocations[0]
-            mScriptBlur._gScratch2 = mTempAllocations[1]
-            mScriptBlur.forEach_copyIn(mInAllocation, mTempAllocations[0])
-            mScriptBlur.forEach_horizontal(mTempAllocations[1])
-            mScriptBlur.forEach_vertical(mOutAllocations[outputIndex])
+            val scriptBlur = checkNotNull(mScriptBlur)
+            scriptBlur._gRadius = iRadius
+            scriptBlur._gKernel = kernel
+            scriptBlur._gScratch1 = mTempAllocations[0]
+            scriptBlur._gScratch2 = mTempAllocations[1]
+            scriptBlur.forEach_copyIn(mInAllocation, mTempAllocations[0])
+            scriptBlur.forEach_horizontal(mTempAllocations[1])
+            scriptBlur.forEach_vertical(mOutAllocations[outputIndex])
         }
 
         // Copy to bitmap, this should cause a synchronization rather than a full copy.

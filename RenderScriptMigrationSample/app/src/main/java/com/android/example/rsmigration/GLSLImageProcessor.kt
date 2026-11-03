@@ -789,13 +789,16 @@ class GLSLImageProcessor : ImageProcessor {
     override fun cleanup() {
         // destroy the EGL images
         mGLScope.launch {
-            for (i in 0 until mOutputEGLImages.size) {
-                androidx.opengl.EGLExt.eglDestroyImageKHR(mDisplay!!, mOutputEGLImages[i])
+            EnableDebugLogging(null)
+            if (::mOutputEGLImages.isInitialized) {
+                for (i in 0 until mOutputEGLImages.size) {
+                    androidx.opengl.EGLExt.eglDestroyImageKHR(mDisplay!!, mOutputEGLImages[i])
+                }
             }
         }
     }
 }
 
 // currently, this requires a bit of native code. it can be removed for release
-external fun EnableDebugLogging(callback: GLES31Ext.DebugProcKHR): Boolean
+external fun EnableDebugLogging(callback: GLES31Ext.DebugProcKHR?): Boolean
 

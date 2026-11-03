@@ -125,7 +125,7 @@ bool ImageProcessor::configureInputAndOutput(JNIEnv* env, jobject inputBitmap,
     // Create input image from bitmap
     mInputImage = Image::createFromBitmap(mContext.get(), env, inputBitmap);
     RET_CHECK(mInputImage != nullptr);
-    LOGV("Input image width = %d, height = %d", mInputImage->width(), mInputImage->height());
+    LOGV("Input image width = %u, height = %u", mInputImage->width(), mInputImage->height());
 
     // Create intermediate image for blur
     mTempImage =

@@ -12,10 +12,11 @@ Both tasks are implemented with RenderScript (intrinsics & custom scripts), GLSL
 
 ## Pre-requisites
 
-- Android Studio Flamingo 2022.2.1+
-- SDK Build Tools 34.0.0+
-- NDK 22.0.7026061
-- Android API 33+
+- Android Studio (with AGP 9.5.0+ support)
+- SDK Build Tools 37.0.0+
+- NDK 30.0.16248370
+- CMake 4.1.2+
+- Android API 37 (37.2)+
 
 ## Getting Started
 

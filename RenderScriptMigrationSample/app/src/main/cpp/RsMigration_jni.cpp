@@ -36,7 +36,10 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_android_example_rsmigration_VulkanImageProcessor_initVulkanProcessor(
         JNIEnv* env, jobject /* this */, jobject _assetManager) {
     auto* assetManager = AAssetManager_fromJava(env, _assetManager);
-    RET_CHECK(assetManager != nullptr);
+    if (assetManager == nullptr) {
+        LOGE("Check failed at %s:%d - assetManager != nullptr", __FILE__, __LINE__);
+        return 0L;
+    }
     auto processor = ImageProcessor::create(/*enableDebug=*/true, assetManager);
     return static_cast<jlong>(reinterpret_cast<uintptr_t>(processor.release()));
 }

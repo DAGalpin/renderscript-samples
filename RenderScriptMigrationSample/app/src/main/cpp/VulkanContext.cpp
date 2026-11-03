@@ -51,10 +51,10 @@ uint32_t chooseWorkGroupSize(const VkPhysicalDeviceLimits& limits) {
     // We prefer the workgroup size to be a multiple of 4.
     size &= ~(3u);
 
-    LOGV("maxComputeWorkGroupInvocations: %d, maxComputeWorkGroupSize: (%d, %d)",
+    LOGV("maxComputeWorkGroupInvocations: %u, maxComputeWorkGroupSize: (%u, %u)",
          limits.maxComputeWorkGroupInvocations, limits.maxComputeWorkGroupSize[0],
          limits.maxComputeWorkGroupSize[1]);
-    LOGV("Choose workgroup size: (%d, %d)", size, size);
+    LOGV("Choose workgroup size: (%u, %u)", size, size);
     return size;
 }
 
@@ -70,12 +70,12 @@ std::unique_ptr<VulkanContext> VulkanContext::create(bool enableDebug) {
 
 bool VulkanContext::checkInstanceVersion() {
     CALL_VK(vkEnumerateInstanceVersion, &mInstanceVersion);
-    if (VK_VERSION_MAJOR(mInstanceVersion) != 1) {
+    if (VK_API_VERSION_MAJOR(mInstanceVersion) != 1) {
         LOGE("incompatible Vulkan version");
         return false;
     }
-    LOGV("Vulkan instance version: %d.%d", VK_VERSION_MAJOR(mInstanceVersion),
-         VK_VERSION_MINOR(mInstanceVersion));
+    LOGV("Vulkan instance version: %u.%u", VK_API_VERSION_MAJOR(mInstanceVersion),
+         VK_API_VERSION_MINOR(mInstanceVersion));
     return true;
 }
 
@@ -99,8 +99,8 @@ bool VulkanContext::createInstance(bool enableDebug) {
     const VkApplicationInfo applicationDesc = {
             .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
             .pApplicationName = "renderscript_migration_sample",
-            .applicationVersion = VK_MAKE_VERSION(0, 0, 1),
-            .apiVersion = static_cast<uint32_t>((VK_VERSION_MINOR(mInstanceVersion) >= 1)
+            .applicationVersion = VK_MAKE_API_VERSION(0, 0, 0, 1),
+            .apiVersion = static_cast<uint32_t>((VK_API_VERSION_MINOR(mInstanceVersion) >= 1)
                                                         ? VK_API_VERSION_1_1
                                                         : VK_API_VERSION_1_0),
     };
